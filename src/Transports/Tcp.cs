@@ -116,7 +116,7 @@ namespace PeerTalk.Transports
         }
 
         /// <inheritdoc />
-        public MultiAddress Listen(MultiAddress address, Action<Stream, MultiAddress, MultiAddress> handler, CancellationToken cancel)
+        public MultiAddress Listen(MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel)
         {
             var port = address.Protocols
                 .Where(p => p.Name == "tcp")
@@ -165,7 +165,7 @@ namespace PeerTalk.Transports
             return address;
         }
 
-        void ProcessConnection(Socket socket, MultiAddress address, Action<Stream, MultiAddress, MultiAddress> handler, CancellationToken cancel)
+        void ProcessConnection(Socket socket, MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel)
         {
             log.Debug("listening on " + address);
 
@@ -236,7 +236,7 @@ namespace PeerTalk.Transports
 #endif
                     try
                     {
-                        handler(peer, address, remote);
+                        handler(peer, address, remote).ConfigureAwait(false).GetAwaiter().GetResult();
                     }
                     catch (Exception e)
                     {

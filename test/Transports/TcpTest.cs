@@ -92,9 +92,10 @@ namespace PeerTalk.Transports
             var tcp = new Tcp();
             var cs = new CancellationTokenSource();
             MultiAddress listenerAddress = null;
-            Action<Stream, MultiAddress, MultiAddress> handler = (stream, local, remote) =>
+            Func<Stream, MultiAddress, MultiAddress, Task> handler = (stream, local, remote) =>
             {
                 Assert.Fail("handler should not be called");
+                return Task.CompletedTask;
             };
             listenerAddress = tcp.Listen("/ip4/127.0.0.1", handler, cs.Token);
             Assert.IsTrue(listenerAddress.Protocols.Any(p => p.Name == "tcp"));
@@ -108,13 +109,14 @@ namespace PeerTalk.Transports
             var cs = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var connected = false;
             MultiAddress listenerAddress = null;
-            Action<Stream, MultiAddress, MultiAddress> handler = (stream, local, remote) =>
+            Func<Stream, MultiAddress, MultiAddress, Task> handler = (stream, local, remote) =>
             {
                 Assert.IsNotNull(stream);
                 Assert.AreEqual(listenerAddress, local);
                 Assert.IsNotNull(remote);
                 Assert.AreNotEqual(local, remote);
                 connected = true;
+                return Task.CompletedTask;
             };
             try
             {
@@ -139,7 +141,7 @@ namespace PeerTalk.Transports
             var tcp = new Tcp();
             var cs = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var called = false;
-            Action<Stream, MultiAddress, MultiAddress> handler = (stream, local, remote) =>
+            Func<Stream, MultiAddress, MultiAddress, Task> handler = (stream, local, remote) =>
             {
                 called = true;
                 throw new Exception("foobar");
@@ -192,12 +194,13 @@ namespace PeerTalk.Transports
                 cs.Cancel();
             }
 
-            void Handler(Stream stream, MultiAddress local, MultiAddress remote)
+            Task Handler(Stream stream, MultiAddress local, MultiAddress remote)
             {
                 var msg = Encoding.UTF8.GetBytes("hello");
                 stream.Write(msg, 0, msg.Length);
                 stream.Flush();
                 stream.Dispose();
+                return Task.CompletedTask;
             }
         }
     }

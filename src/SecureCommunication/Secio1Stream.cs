@@ -91,7 +91,7 @@ namespace PeerTalk.SecureCommunication
         public override bool CanSeek => false;
 
         /// <inheritdoc />
-        public override bool CanWrite => stream.CanRead;
+        public override bool CanWrite => stream.CanWrite;
 
         /// <inheritdoc />
         public override bool CanTimeout => false;
@@ -129,28 +129,24 @@ namespace PeerTalk.SecureCommunication
         /// <inheritdoc />
         public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            int total = 0;
-            while (count > 0)
+            // reads whole packets (of encrypted data) at a time
+            // buffers them and returns the correct number of bytes
+            if (inBlock == null)
             {
-                // Does the current packet have some unread data?
-                if (inBlock != null && inBlockOffset < inBlock.Length)
-                {
-                    var n = Math.Min(inBlock.Length - inBlockOffset, count);
-                    Array.Copy(inBlock, inBlockOffset, buffer, offset, n);
-                    total += n;
-                    count -= n;
-                    offset += n;
-                    inBlockOffset += n;
-                }
-                // Otherwise, wait for a new block of data.
-                else
-                {
-                    inBlock = await ReadPacketAsync(cancellationToken);
-                    inBlockOffset = 0;
-                }
+                // we don't have an existing packet
+                inBlock = await ReadPacketAsync(cancellationToken);
+                inBlockOffset = 0;
             }
 
-            return total;
+            var bytesRead = Math.Min(inBlock.Length - inBlockOffset, count);
+            Array.Copy(inBlock, inBlockOffset, buffer, offset, bytesRead);
+            inBlockOffset += bytesRead;
+            if (inBlockOffset >= inBlock.Length)
+            {
+                inBlock = null; // fetch a new packet on next invocation
+            }
+
+            return bytesRead;
         }
 
         /// <summary>

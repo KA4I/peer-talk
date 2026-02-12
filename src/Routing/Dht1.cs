@@ -19,7 +19,7 @@ namespace PeerTalk.Routing
     /// <summary>
     ///   DHT Protocol version 1.0
     /// </summary>
-    public class Dht1 : IPeerProtocol, IService, IPeerRouting, IContentRouting
+    public class Dht1 : IPeerProtocol, IService, IPeerRouting, IContentRouting, IValueStore
     {
         static ILog log = LogManager.GetLogger(typeof(Dht1));
 
@@ -33,6 +33,11 @@ namespace PeerTalk.Routing
         ///   Provides access to other peers.
         /// </summary>
         public Swarm Swarm { get; set; }
+
+        /// <summary>
+        /// Provides storage for DHT key value pairs
+        /// </summary>
+        public IDataStore<byte[], DhtRecord> DataStore { get; set; }
 
         /// <summary>
         ///  Routing information on peers.
@@ -57,6 +62,11 @@ namespace PeerTalk.Routing
         /// </summary>
         /// <seealso cref="StopAsync"/>
         public event EventHandler Stopped;
+
+        /// <summary>
+        /// The Selector to use to determine the best record when getting records from the DHT
+        /// </summary>
+        public Selector Selector { get; set; }
 
         /// <inheritdoc />
         public override string ToString()
@@ -91,6 +101,12 @@ namespace PeerTalk.Routing
                     case MessageType.AddProvider:
                         response = ProcessAddProvider(connection.RemotePeer, request, response);
                         break;
+                    case MessageType.GetValue:
+                        response = await ProcessGetValueAsync(connection.RemotePeer, request, response, cancel);
+                        break;
+                    case MessageType.PutValue:
+                        response = await ProcessPutValueAsync(connection.RemotePeer, request, response, cancel);
+                        break;
                     default:
                         log.Debug($"unknown {request.Type} from {connection.RemotePeer}");
                         // TODO: Should we close the stream?
@@ -117,6 +133,11 @@ namespace PeerTalk.Routing
             foreach (var peer in Swarm.KnownPeers)
             {
                 RoutingTable.Add(peer);
+            }
+
+            if (this.Selector == null)
+            {
+                this.Selector = new Selector();
             }
 
             return Task.CompletedTask;
@@ -181,6 +202,28 @@ namespace PeerTalk.Routing
             }
 
             return dquery.Answers.First();
+        }
+
+        private async Task<IEnumerable<Peer>> GetClosestPeersAsync(byte[] key, CancellationToken cancel = default(CancellationToken))
+        {
+            var id = new MultiHash(key);
+
+            // js-libp2p uses 20 as number to query https://github.com/libp2p/js-libp2p-kad-dht/blob/1f02658d82bfbcbde7ead97149fdd0b70d711d4a/src/index.js#L48
+            const int closestPeersToReturn = 20; 
+
+            // we ask our local peers to all go find the closest peers
+            var dQuery = new DistributedQuery<Peer>()
+            {
+                AnswersNeeded = closestPeersToReturn,
+                Dht = this,
+                QueryKey = id,
+                QueryType = MessageType.FindNode,
+                Shallow = true
+            };
+            await dQuery.RunAsync(cancel).ConfigureAwait(false);
+
+            // the closest peers will have been added to the routingtable so we can now return those
+            return this.RoutingTable.NearestPeers(id).Take(closestPeersToReturn).ToArray();
         }
 
         /// <inheritdoc />
@@ -302,6 +345,55 @@ namespace PeerTalk.Routing
             return request;
         }
 
+        private async Task<DhtMessage> ProcessPutValueAsync(Peer remotePeer, DhtMessage request, DhtMessage response,
+            CancellationToken cancel)
+        {
+            if (request.Record?.Value != null)
+            {
+                await this.PutLocalAsync(request.Key, request.Record.Value, cancel);
+            }
+
+            response.Record = request.Record;
+            return response;
+        }
+
+        private async Task<DhtMessage> ProcessGetValueAsync(Peer remotePeer, DhtMessage request, DhtMessage response,
+            CancellationToken cancel)
+        {
+            if (IsPublicKeyKey(request.Key))
+            {
+                var peerId = new MultiHash(request.Key.Skip(4).ToArray());
+                var peer = TryFindPeer(peerId);
+                AddCloserPeers(response, peerId, peer);
+                response.Record = new DhtRecordMessage(request.Key, peerId.ToArray());
+                return response;
+            }
+
+            DhtRecord localValue = null;
+            if (this.DataStore != null)
+            {
+                localValue = await this.DataStore.GetAsync(request.Key, cancel);
+            }
+
+            if (localValue != null)
+            {
+                response.Record = new DhtRecordMessage(request.Key, localValue.Value)
+                {
+                    TimeReceived = DhtRecordMessage.FormatDateTime(localValue.TimeReceived)
+                };
+            }
+
+            AddCloserPeers(response, new MultiHash(request.Key));
+            return response;
+        }
+
+        static readonly byte[] publicKeyPrefix = Encoding.UTF8.GetBytes("/pk/");
+
+        private bool IsPublicKeyKey(byte[] key)
+        {
+            return publicKeyPrefix.SequenceEqual(key);
+        }
+
         /// <summary>
         ///   Process a find node request.
         /// </summary>
@@ -320,6 +412,16 @@ namespace PeerTalk.Routing
             }
 
             // Do we know the peer?.
+            var peer = TryFindPeer(peerId);
+            AddCloserPeers(response, peerId, peer);
+
+            if (log.IsDebugEnabled)
+                log.Debug($"returning {response.CloserPeers.Length} closer peers");
+            return response;
+        }
+
+        private Peer TryFindPeer(MultiHash peerId)
+        {
             Peer found = null;
             if (Swarm.LocalPeer.Id == peerId)
             {
@@ -330,6 +432,11 @@ namespace PeerTalk.Routing
                 found = Swarm.KnownPeers.FirstOrDefault(p => p.Id == peerId);
             }
 
+            return found;
+        }
+
+        private void AddCloserPeers(DhtMessage response, MultiHash id, Peer found = null)
+        {
             // Find the closer peers.
             var closerPeers = new List<Peer>();
             if (found != null)
@@ -338,7 +445,7 @@ namespace PeerTalk.Routing
             }
             else
             {
-                closerPeers.AddRange(RoutingTable.NearestPeers(peerId).Take(CloserPeerCount));
+                closerPeers.AddRange(RoutingTable.NearestPeers(id).Take(CloserPeerCount));
             }
 
             // Build the response.
@@ -349,10 +456,6 @@ namespace PeerTalk.Routing
                     Addresses = peer.Addresses.Select(a => a.WithoutPeerId().ToArray()).ToArray()
                 })
                 .ToArray();
-
-            if (log.IsDebugEnabled)
-                log.Debug($"returning {response.CloserPeers.Length} closer peers");
-            return response;
         }
 
         /// <summary>
@@ -417,5 +520,151 @@ namespace PeerTalk.Routing
             return null;
         }
 
+        /// <inheritdoc />
+        public async Task<byte[]> GetAsync(byte[] key, CancellationToken cancel = new CancellationToken())
+        {
+            var value = await GetBestValueAsync(key, cancel);
+            if (value == null)
+            {
+                throw new Exception("Unable to get value for key");
+            }
+
+            return value;
+        }
+
+        private async Task<byte[]> GetBestValueAsync(byte[] key, CancellationToken cancel)
+        {
+            log.Debug("Get value");
+
+            // as per https://github.com/libp2p/js-libp2p-kad-dht/blob/master/src/constants.js (seems a bit high though?)
+            const int valuesRequired = 16; 
+
+            var id = new MultiHash(key);
+            var dQuery = new DistributedQuery<GetValueAnswer>()
+            {
+                AnswersNeeded = valuesRequired,
+                QueryType = MessageType.GetValue,
+                QueryKey = id,
+                Dht = this
+            };
+
+            if (this.DataStore != null)
+            {
+                var localValue = await this.DataStore.GetAsync(key, cancel);
+                if (localValue != null)
+                {
+                    dQuery.AddAnswer(
+                        new GetValueAnswer(
+                            new DhtMessage
+                            {
+                                Key = key, 
+                                Type = MessageType.GetValue, 
+                                Record = new DhtRecordMessage(key, localValue.Value)
+                                {
+                                    TimeReceived = DhtRecordMessage.FormatDateTime(localValue.TimeReceived)
+                                }
+                            }, 
+                            this.Swarm.LocalPeer));
+                }
+            }
+
+            dQuery.OnResponseReceived = (message, peer) =>
+            {
+                if (message.Record?.Value != null)
+                {
+                    dQuery.AddAnswer(new GetValueAnswer(message, peer));
+                }
+            };
+            await dQuery.RunAsync(cancel).ConfigureAwait(false);
+            if (!dQuery.Answers.Any())
+            {
+                return null;
+            }
+
+            var values = dQuery.Answers.Select(d => d.Message.Record.Value).ToArray();
+            var bestRecordIndex = this.Selector.BestRecord(id.ToBase58(), values);
+            var best = values[bestRecordIndex];
+
+            await this.SendCorrectionRecordAsync(key, dQuery.Answers, best, cancel);
+            return best;
+        }
+
+        private async Task SendCorrectionRecordAsync(byte[] key, IEnumerable<GetValueAnswer> answers, byte[] bestValue,
+            CancellationToken cancel)
+        {
+            // update locally
+            await this.PutLocalAsync(key, bestValue, cancel);
+
+            // update out of date peers
+            var record = new DhtRecordMessage(key, bestValue);
+            var incorrectPeers = answers.Where(d => d.Peer != this.Swarm.LocalPeer
+                                                    && !d.Message.Record.Value.SequenceEqual(bestValue));
+            foreach (var getValueAnswer in incorrectPeers)
+            {
+                await this.PutValueToPeerAsync(key, record, getValueAnswer.Peer, cancel);
+            }
+        }
+
+        private async Task PutLocalAsync(byte[] key, byte[] value, CancellationToken cancel)
+        {
+            if (this.DataStore != null)
+            {
+                await this.DataStore.PutAsync(key, new DhtRecord(value), cancel);
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task PutAsync(byte[] key, byte[] value, CancellationToken cancel = new CancellationToken())
+        {
+            log.Debug($"Put value");
+            var record = new DhtRecordMessage(key, value);
+
+            // store locally
+            await this.PutLocalAsync(key, value, cancel);
+            
+            // put record to the closest peers
+            var counterAll = 0;
+            var counterSuccess = 0;
+            foreach (var peer in await this.GetClosestPeersAsync(key, cancel))
+            {
+                try
+                {
+                    counterAll++;
+                    await this.PutValueToPeerAsync(key, record, peer);
+                    counterSuccess++;
+                }
+                catch (Exception ex)
+                {
+                    log.Error($"Failed to put to peer {peer.Id}: {ex.Message}");
+                }
+            }
+
+            // TODO Implement logic to configure the minimum number of peers required
+            if (counterSuccess == 0)
+            {
+                throw new Exception("Unable to put value to any peers");
+            }
+        }
+
+        private async Task PutValueToPeerAsync(byte[] key, DhtRecordMessage record, Peer peer, CancellationToken cancel = new CancellationToken())
+        {
+            var message = new DhtMessage
+            {
+                Type = MessageType.PutValue,
+                Key = key,
+                Record = record
+            };
+            using (var stream = await Swarm.DialAsync(peer, this.ToString()))
+            {
+                ProtoBuf.Serializer.SerializeWithLengthPrefix(stream, message, PrefixStyle.Base128);
+                await stream.FlushAsync();
+
+                var response = await ProtoBufHelper.ReadMessageAsync<DhtMessage>(stream, cancel).ConfigureAwait(false);
+                if (response.Record.Value.SequenceEqual(record.Value))
+                {
+                    throw new Exception($"value not put correctly");
+                }
+            }
+        }
     }
 }

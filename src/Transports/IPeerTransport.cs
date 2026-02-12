@@ -61,6 +61,6 @@ namespace PeerTalk.Transports
         ///   or is zero an ephermal port is assigned.
         ///   </para>
         /// </remarks>
-        MultiAddress Listen(MultiAddress address, Action<Stream, MultiAddress, MultiAddress> handler, CancellationToken cancel);
+        MultiAddress Listen(MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel);
     }
 }

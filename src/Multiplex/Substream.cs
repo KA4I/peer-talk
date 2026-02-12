@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
+using Common.Logging;
 
 namespace PeerTalk.Multiplex
 {
@@ -23,12 +24,14 @@ namespace PeerTalk.Multiplex
     /// </remarks>
     public class Substream : Stream
     {
+        static ILog log = LogManager.GetLogger(typeof(Substream));
+
         BufferBlock<byte[]> inBlocks = new BufferBlock<byte[]>();
         byte[] inBlock;
         int inBlockOffset;
         bool eos;
 
-        Stream outStream = new MemoryStream();
+        MemoryStream outStream = new MemoryStream();
 
         /// <summary>
         ///   The type of message of sent to the other side.
@@ -133,34 +136,54 @@ namespace PeerTalk.Multiplex
         /// <inheritdoc />
         public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            int total = 0;
-            while (count > 0 && !eos)
+            // we only call ReceiveAsync if there's no data in the buffer
+            // two levels of buffer, the bufferblock containing incoming messages
+            // and the current inBlock which is due to the previous call to ReadAsync being maxed out
+            if (inBlock == null)
             {
-                // Does the current block have some unread data?
-                if (inBlock != null && inBlockOffset < inBlock.Length)
-                {
-                    var n = Math.Min(inBlock.Length - inBlockOffset, count);
-                    Array.Copy(inBlock, inBlockOffset, buffer, offset, n);
-                    total += n;
-                    count -= n;
-                    offset += n;
-                    inBlockOffset += n;
-                }
-                // Otherwise, wait for a new block of data.
-                else
+                if (!inBlocks.TryReceive(null, out inBlock))
                 {
                     try
                     {
                         inBlock = await inBlocks.ReceiveAsync(cancellationToken).ConfigureAwait(false);
-                        inBlockOffset = 0;
                     }
-                    catch (InvalidOperationException) // no more data!
+                    catch (InvalidOperationException) // no more data
                     {
                         eos = true;
+                        return 0;
                     }
                 }
+
+                inBlockOffset = 0;
             }
-            return total;
+
+            var totalRead = 0;
+            while (inBlock != null)
+            {
+                // copy from this block to the buffer
+                var bytesRead = Math.Min(inBlock.Length - inBlockOffset, count - totalRead);
+                Array.Copy(inBlock, inBlockOffset, buffer, offset, bytesRead);
+                inBlockOffset += bytesRead;
+                offset += bytesRead;
+                totalRead += bytesRead;
+                if (inBlockOffset == inBlock.Length) // used up this block
+                {
+                    inBlockOffset = 0;
+                    inBlock = null;
+                }
+
+                if (totalRead < count)
+                {
+                    inBlocks.TryReceive(null, out inBlock);
+                    inBlockOffset = 0;
+                }
+                else
+                {
+                    return totalRead;
+                }
+            }
+
+            return totalRead;
         }
         
         /// <inheritdoc />
@@ -181,11 +204,17 @@ namespace PeerTalk.Multiplex
             using (await Muxer.AcquireWriteAccessAsync().ConfigureAwait(false))
             {
                 outStream.Position = 0;
+                
                 var header = new Header
                 {
                     StreamId = Id,
                     PacketType = SentMessageType
                 };
+
+                log.Trace($"Sending {Id}: {SentMessageType}");
+                log.Trace($"Content: {Encoding.UTF8.GetString(outStream.ToArray())}");
+                outStream.Position = 0;
+
                 await header.WriteAsync(Muxer.Channel, cancel).ConfigureAwait(false);
                 await Varint.WriteVarintAsync(Muxer.Channel, outStream.Length, cancel).ConfigureAwait(false);
                 await outStream.CopyToAsync(Muxer.Channel).ConfigureAwait(false);

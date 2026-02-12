@@ -67,7 +67,7 @@ namespace PeerTalk.Transports
         }
 
         /// <inheritdoc />
-        public MultiAddress Listen(MultiAddress address, Action<Stream, MultiAddress, MultiAddress> handler, CancellationToken cancel)
+        public MultiAddress Listen(MultiAddress address, Func<Stream, MultiAddress, MultiAddress, Task> handler, CancellationToken cancel)
         {
             var port = address.Protocols
                 .Where(p => p.Name == "udp")

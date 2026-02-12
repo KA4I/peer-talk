@@ -59,10 +59,11 @@ namespace PeerTalk.Transports
             var cs = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var connected = false;
             MultiAddress listenerAddress = null;
-            Action<Stream, MultiAddress, MultiAddress> handler = (stream, local, remote) =>
+            Func<Stream, MultiAddress, MultiAddress, Task> handler = (stream, local, remote) =>
             {
                 Assert.IsNotNull(stream);
                 connected = true;
+                return Task.CompletedTask;
             };
             try
             {
@@ -140,12 +141,13 @@ namespace PeerTalk.Transports
                 cs.Cancel();
             }
 
-            void Handler(Stream stream, MultiAddress local, MultiAddress remote)
+            Task Handler(Stream stream, MultiAddress local, MultiAddress remote)
             {
                 var msg = Encoding.UTF8.GetBytes("hello");
                 stream.Write(msg, 0, msg.Length);
                 stream.Flush();
                 stream.Dispose();
+                return Task.CompletedTask;
             }
         }
     }

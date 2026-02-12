@@ -47,6 +47,7 @@ namespace PeerTalk.Routing
         ConcurrentDictionary<T, T> answers = new ConcurrentDictionary<T, T>();
         DhtMessage queryMessage;
         int failedConnects = 0;
+        private IEnumerable<Peer> peerSource;
 
         /// <summary>
         ///   Raised when an answer is obtained.
@@ -106,6 +107,16 @@ namespace PeerTalk.Routing
         public MultiHash QueryKey { get; set; }
 
         /// <summary>
+        /// Do not recursively ask more peers as we discover them. Just ask the ones we know
+        /// </summary>
+        public bool Shallow { get; set; }
+
+        /// <summary>
+        /// Enables custom processing of the responses as they're received
+        /// </summary>
+        public Action<DhtMessage, Peer> OnResponseReceived { get; set; }
+
+        /// <summary>
         ///   Starts the distributed query.
         /// </summary>
         /// <param name="cancel">
@@ -126,6 +137,12 @@ namespace PeerTalk.Routing
                 Key = QueryKey?.ToArray(),
             };
 
+            // if we're running a shallow query we copy the current peers from the routing table
+            // if not, we reference the routingtable directly which will increase as we discover
+            // more peers through this query
+            this.peerSource = this.Shallow
+                ? Dht.RoutingTable.NearestPeers(QueryKey).ToArray()
+                : Dht.RoutingTable.NearestPeers(QueryKey);
             var tasks = Enumerable
                 .Range(1, ConcurrencyLevel)
                 .Select(i => { var id = i; return AskAsync(id); });
@@ -160,12 +177,15 @@ namespace PeerTalk.Routing
             while (!runningQuery.IsCancellationRequested && waits > 0)
             {
                 // Get the nearest peer that has not been visited.
-                var peer = Dht.RoutingTable
-                    .NearestPeers(QueryKey)
-                    .Where(p => !visited.ContainsKey(p))
-                    .FirstOrDefault();
+                var peer = this.peerSource
+                    .FirstOrDefault(p => !visited.ContainsKey(p));
                 if (peer == null)
                 {
+                    if (this.Shallow)
+                    {
+                        return;
+                    }
+
                     --waits;
                     await Task.Delay(100);
                     continue;
@@ -195,6 +215,7 @@ namespace PeerTalk.Routing
                         // Process answer
                         ProcessProviders(response.ProviderPeers);
                         ProcessCloserPeers(response.CloserPeers);
+                        this.OnResponseReceived?.Invoke(response, peer);
                     }
                     var time = DateTime.Now - start;
                     log.Debug($"Q{Id}.{taskId}.{pass} ok {peer} ({time.TotalMilliseconds} ms)");

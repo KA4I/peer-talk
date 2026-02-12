@@ -15,13 +15,15 @@ using PeerTalk.Protocols;
 using PeerTalk.Cryptography;
 using Ipfs.CoreApi;
 using Nito.AsyncEx;
+using PeerTalk.Multiplex;
+using PeerTalk.Relay;
 
 namespace PeerTalk
 {
     /// <summary>
     ///   Manages communication with other peers.
     /// </summary>
-    public class Swarm : IService, IPolicy<MultiAddress>, IPolicy<Peer>
+    public class Swarm : IService, IPolicy<MultiAddress>, IPolicy<Peer>, IDialer
     {
         static ILog log = LogManager.GetLogger(typeof(Swarm));
 
@@ -46,6 +48,8 @@ namespace PeerTalk
             new Identify1(),
             new Mplex67()
         };
+
+        TransportRegistry transportRegistry = new TransportRegistry();
 
         /// <summary>
         ///   Added to connection protocols when needed.
@@ -589,6 +593,7 @@ namespace PeerTalk
             // Get the addresses we can use to dial the remote.  Filter
             // out any addresses (ip and port) we are listening on.
             var blackList = listeners.Keys
+                .Where(a => !a.IsP2PCircuitAddress())
                 .Select(a => a.WithoutPeerId())
                 .ToArray();
             var possibleAddresses = (await Task.WhenAll(addrs.Select(a => a.ResolveAsync(cancel))).ConfigureAwait(false))
@@ -660,8 +665,9 @@ namespace PeerTalk
         {
             // TODO: HACK: Currenty only the ipfs/p2p is supported.
             // short circuit to make life faster.
-            if (addr.Protocols.Count != 3
-                || !(addr.Protocols[2].Name == "ipfs" || addr.Protocols[2].Name == "p2p"))
+            if (!addr.IsP2PCircuitAddress()
+                && (addr.Protocols.Count != 3
+                || !(addr.Protocols[2].Name == "ipfs" || addr.Protocols[2].Name == "p2p")))
             {
                 throw new Exception($"Cannnot dial; unknown protocol in '{addr}'.");
             }
@@ -671,7 +677,7 @@ namespace PeerTalk
             foreach (var protocol in addr.Protocols)
             {
                 cancel.ThrowIfCancellationRequested();
-                if (TransportRegistry.Transports.TryGetValue(protocol.Name, out Func<IPeerTransport> transport))
+                if (this.transportRegistry.Transports.TryGetValue(protocol.Name, out Func<IPeerTransport> transport))
                 {
                     stream = await transport().ConnectAsync(addr, cancel).ConfigureAwait(false);
                     if (cancel.IsCancellationRequested)
@@ -771,9 +777,9 @@ namespace PeerTalk
             var didSomething = false;
             foreach (var protocol in address.Protocols)
             {
-                if (TransportRegistry.Transports.TryGetValue(protocol.Name, out Func<IPeerTransport> transport))
+                if (this.transportRegistry.Transports.TryGetValue(protocol.Name, out Func<IPeerTransport> transport))
                 {
-                    address = transport().Listen(address, OnRemoteConnect, cancel.Token);
+                    address = transport().Listen(address, OnRemoteConnectAsync, cancel.Token);
                     listeners.TryAdd(address, cancel);
                     didSomething = true;
                     break;
@@ -860,7 +866,7 @@ namespace PeerTalk
         ///   Establishes the protocols of the connection.  Any exception is simply
         ///   logged as warning.
         /// </remarks>
-        async void OnRemoteConnect(Stream stream, MultiAddress local, MultiAddress remote)
+        async Task OnRemoteConnectAsync(Stream stream, MultiAddress local, MultiAddress remote)
 #pragma warning restore VSTHRD100 // Avoid async void methods
         {
             if (!IsRunning)
@@ -898,6 +904,8 @@ namespace PeerTalk
                 {
                     log.Debug($"remote connect from {remote}");
                 }
+
+                var subStream = stream as Substream; // if we're connecting over the top of another peerconnection we need to tell it to stop processing
 
                 // TODO: Check the policies
 
@@ -946,6 +954,8 @@ namespace PeerTalk
                 {
                     ConnectionEstablished?.Invoke(this, connection);
                 }
+
+                subStream?.Muxer.Connection.NotifyStreamIsProxy(subStream);
             }
             catch (Exception e)
             {
@@ -966,6 +976,41 @@ namespace PeerTalk
             {
                 pendingRemoteConnections.TryRemove(remote, out object _);
             }
+        }
+
+        /// <summary>
+        /// Adds p2p-circuit/relay transport and protocol handling to the swarm
+        /// </summary>
+        /// <param name="relayCollection"></param>
+        /// <param name="hop"></param>
+        public void EnableRelay(RelayCollection relayCollection = null, bool hop = false)
+        {
+            var relay = new Relay.Relay()
+            {
+                Dialer = this,
+                Hop = hop,
+                KnownRelays = relayCollection ?? RelayCollection.Default
+            };
+            this.transportRegistry.Register("p2p-circuit", () => relay);
+        }
+
+        /// <summary>
+        /// Adds a new transport provider to the Swarm
+        /// </summary>
+        /// <param name="protocolName"></param>
+        /// <param name="transport"></param>
+        public void RegisterTransport(string protocolName, Func<IPeerTransport> transport)
+        {
+            this.transportRegistry.Register(protocolName, transport);
+        }
+
+        /// <summary>
+        /// Removes a transport provider from the swarm
+        /// </summary>
+        /// <param name="protocolName"></param>
+        public void DeregisterTransport(string protocolName)
+        {
+            this.transportRegistry.Deregister(protocolName);
         }
 
         /// <summary>

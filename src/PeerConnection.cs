@@ -4,6 +4,7 @@ using PeerTalk.Cryptography;
 using PeerTalk.Multiplex;
 using PeerTalk.Protocols;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -307,6 +308,8 @@ namespace PeerTalk
             log.Debug($"stop reading messsages from {RemoteAddress}");
         }
 
+        private ConcurrentDictionary<long, Stream> proxiedSubstreamIds = new ConcurrentDictionary<long, Stream>();
+
         /// <summary>
         ///   Starts reading messages from the remote peer on the specified stream.
         /// </summary>
@@ -315,7 +318,11 @@ namespace PeerTalk
             IPeerProtocol protocol = new Multistream1();
             try
             {
-                while (!cancel.IsCancellationRequested && stream != null && stream.CanRead)
+                while (
+                    !cancel.IsCancellationRequested 
+                    && stream != null 
+                    && stream.CanRead
+                    && (!(stream is Substream substream) || !proxiedSubstreamIds.ContainsKey(substream.Id)))
                 {
                     await protocol.ProcessMessageAsync(this, stream, cancel).ConfigureAwait(false);
                 }
@@ -330,6 +337,19 @@ namespace PeerTalk
                 {
                     log.Error($"reading message failed {RemoteAddress} {RemotePeer}", e);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Informs the peer connection that a substream is being used to proxy traffic
+        /// This results in the stream not being read by the connection
+        /// </summary>
+        /// <param name="stream"></param>
+        public void NotifyStreamIsProxy(Stream stream)
+        {
+            if (stream is Substream substream)
+            {
+                this.proxiedSubstreamIds.TryAdd(substream.Id, substream);
             }
         }
 
