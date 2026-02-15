@@ -34,7 +34,7 @@ namespace PeerTalk
                     Assert.AreEqual(expectedMessage, e.Message);
                 return e;
             }
-            Assert.Fail("Exception of type {0} should be thrown.", typeof(T));
+            Assert.Fail($"Exception of type {typeof(T)} should be thrown.");
 
             //  The compiler doesn't know that Assert.Fail will always throw an exception
             return null;

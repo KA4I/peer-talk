@@ -1,7 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net461;netcoreapp2.1</TargetFrameworks>
+    <TargetFramework>net10.0</TargetFramework>
 
     <IsPackable>false</IsPackable>
     <DebugType>portable</DebugType>
@@ -17,15 +17,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Common.Logging.Serilog" Version="4.4.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.1.1" PrivateAssets="all" />
-    <PackageReference Include="MSTest.TestAdapter" Version="1.4.0" PrivateAssets="all" />
-    <PackageReference Include="MSTest.TestFramework" Version="1.4.0" PrivateAssets="all" />
-    <PackageReference Include="coverlet.msbuild" Version="2.6.2" PrivateAssets="all" />
-    <PackageReference Include="Nerdbank.Streams" Version="2.5.60" />
-    <PackageReference Include="Serilog.Enrichers.Thread" Version="3.1.0" />
-    <PackageReference Include="Serilog.Formatting.Compact" Version="1.1.0" />
-    <PackageReference Include="Serilog.Sinks.File" Version="4.1.0" />
+    <PackageReference Include="Common.Logging.Serilog" Version="5.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" PrivateAssets="all" />
+    <PackageReference Include="MSTest.TestAdapter" Version="4.1.0" PrivateAssets="all" />
+    <PackageReference Include="MSTest.TestFramework" Version="4.1.0" PrivateAssets="all" />
+    <PackageReference Include="coverlet.msbuild" Version="6.0.4" PrivateAssets="all" />
+    <PackageReference Include="Nerdbank.Streams" Version="2.13.16" />
+    <PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
   </ItemGroup>
 
   <ItemGroup>
