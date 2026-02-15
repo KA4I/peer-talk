@@ -243,24 +243,25 @@ namespace PeerTalk.Relay
                 log.Trace($"Received success from STOP request");
                 await SendRelayMessageAsync(CircuitRelayMessage.NewStatusResponse(Status.SUCCESS), srcStream, cancel);
                 log.Trace($"Piping the streams together");
-                var srcToDst = PipeAsync(srcStream, dstStream);
-                var dstToSrc = PipeAsync(dstStream, srcStream);
+                var srcToDst = PipeAsync(srcStream, dstStream, "src→dst");
+                var dstToSrc = PipeAsync(dstStream, srcStream, "dst→src");
                 await srcToDst;
                 await dstToSrc;
             }
 
-            async Task PipeAsync(Stream inStream, Stream outStream)
+            async Task PipeAsync(Stream inStream, Stream outStream, string label)
             {
                 while (!cancel.IsCancellationRequested)
                 {
                     var buffer = new byte[1024];
                     var bytesRead = await inStream.ReadAsync(buffer, 0, 1024, cancellationToken: cancel);
-                    log.Trace($"Received message from peer");
-                    if (bytesRead > 0)
+                    if (bytesRead == 0)
                     {
-                        await outStream.WriteAsync(buffer, 0, bytesRead, cancel);
-                        await outStream.FlushAsync(cancel);
+                        break; // end of stream
                     }
+                    log.Trace($"Received message from peer");
+                    await outStream.WriteAsync(buffer, 0, bytesRead, cancel);
+                    await outStream.FlushAsync(cancel);
                 }
             }
         }

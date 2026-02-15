@@ -24,7 +24,7 @@ namespace PeerTalk.Routing
         static ILog log = LogManager.GetLogger(typeof(Dht1));
 
         /// <inheritdoc />
-        public string Name { get; } = "ipfs/kad";
+        public string Name { get; set; } = "ipfs/kad";
 
         /// <inheritdoc />
         public SemVersion Version { get; } = new SemVersion(1, 0);
@@ -532,6 +532,26 @@ namespace PeerTalk.Routing
             return value;
         }
 
+        /// <inheritdoc />
+        public Task<bool> TryGetAsync(byte[] key, out byte[] value, CancellationToken cancel = default)
+        {
+            try
+            {
+                var result = GetBestValueAsync(key, cancel).GetAwaiter().GetResult();
+                if (result != null)
+                {
+                    value = result;
+                    return Task.FromResult(true);
+                }
+            }
+            catch
+            {
+                // Swallow - key not found
+            }
+            value = null;
+            return Task.FromResult(false);
+        }
+
         private async Task<byte[]> GetBestValueAsync(byte[] key, CancellationToken cancel)
         {
             log.Debug("Get value");
@@ -644,6 +664,13 @@ namespace PeerTalk.Routing
             {
                 throw new Exception("Unable to put value to any peers");
             }
+        }
+
+        /// <inheritdoc />
+        public Task PutAsync(byte[] key, out byte[] value, CancellationToken cancel = default)
+        {
+            value = key;
+            return PutAsync(key, value, cancel);
         }
 
         private async Task PutValueToPeerAsync(byte[] key, DhtRecordMessage record, Peer peer, CancellationToken cancel = new CancellationToken())

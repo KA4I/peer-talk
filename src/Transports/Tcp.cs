@@ -14,9 +14,7 @@ using System.Net;
 using JuiceStream;
 #endif
 
-#if !NET461
 using System.Runtime.InteropServices;
-#endif
 
 namespace PeerTalk.Transports
 {
@@ -176,9 +174,12 @@ namespace PeerTalk.Transports
 
                 try
                 {
-                    // .Net Standard on Unix neeeds this to cancel the Accept
-#if !NET461
-                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    // On Unix-like platforms (Linux, macOS, iOS, Android),
+                    // shutdown is needed to cancel a blocking Accept.
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                        || OperatingSystem.IsAndroid()
+                        || OperatingSystem.IsIOS()
+                        || OperatingSystem.IsTvOS())
                     {
                         socket.Shutdown(SocketShutdown.Both);
                         socket.Dispose();
@@ -187,13 +188,10 @@ namespace PeerTalk.Transports
                     {
                         socket.Shutdown(SocketShutdown.Receive);
                     }
-                    else // must be windows
+                    else
                     {
                         socket.Dispose();
                     }
-#else
-                    socket.Dispose();
-#endif
                 }
                 catch (Exception e)
                 {

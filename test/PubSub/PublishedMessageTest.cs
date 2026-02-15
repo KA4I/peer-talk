@@ -61,10 +61,12 @@ namespace PeerTalk.PubSub
         }
 
         [TestMethod]
-        [ExpectedException(typeof(NotSupportedException))]
         public void CidNotSupported()
         {
-            var _ = new PublishedMessage().Id;
+            Assert.ThrowsExactly<NotSupportedException>(() =>
+            {
+                var _ = new PublishedMessage().Id;
+            });
         }
 
         [TestMethod]

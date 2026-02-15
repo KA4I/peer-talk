@@ -44,9 +44,16 @@ namespace PeerTalk
         List<IPeerProtocol> protocols = new List<IPeerProtocol>
         {
             new Multistream1(),
-            new SecureCommunication.Secio1(),
+            new SecureCommunication.Tls1(),
+            new SecureCommunication.Noise1(),
             new Identify1(),
-            new Mplex67()
+            new IdentifyPush1(),
+            new IdentifyDelta1(),
+            new Mplex67(),
+            new Yamux1(),
+            new AutoNat1(),
+            new AutoNat2(),
+            new DCUtR()
         };
 
         TransportRegistry transportRegistry = new TransportRegistry();
@@ -631,13 +638,33 @@ namespace PeerTalk
             try
             {
                 MountProtocols(connection);
-                IEncryptionProtocol[] security = null;
-                lock (protocols)
+
+                if (connection.IsQuic)
                 {
-                    security = protocols.OfType<IEncryptionProtocol>().ToArray();
+                    // QUIC has built-in TLS 1.3 and multiplexing.
+                    // Skip multistream/security/muxer negotiation.
+                    connection.SecurityEstablished.TrySetResult(true);
+                    var quicMuxer = new Multiplex.Muxer
+                    {
+                        Channel = connection.Stream,
+                        Initiator = true,
+                        Connection = connection
+                    };
+                    quicMuxer.SubstreamCreated += (s, e) => _ = connection.ReadMessagesAsync(e, CancellationToken.None);
+                    connection.MuxerEstablished.TrySetResult(quicMuxer);
+                    _ = quicMuxer.ProcessRequestsAsync();
                 }
-                await connection.InitiateAsync(security, cancel).ConfigureAwait(false);
-                await connection.MuxerEstablished.Task.ConfigureAwait(false);
+                else
+                {
+                    IEncryptionProtocol[] security = null;
+                    lock (protocols)
+                    {
+                        security = protocols.OfType<IEncryptionProtocol>().ToArray();
+                    }
+                    await connection.InitiateAsync(security, cancel).ConfigureAwait(false);
+                    await connection.MuxerEstablished.Task.ConfigureAwait(false);
+                }
+
                 Identify1 identify = null;
                 lock (protocols)
                 {
@@ -663,9 +690,9 @@ namespace PeerTalk
 
         async Task<PeerConnection> DialAsync(Peer remote, MultiAddress addr, CancellationToken cancel)
         {
-            // TODO: HACK: Currenty only the ipfs/p2p is supported.
-            // short circuit to make life faster.
-            if (!addr.IsP2PCircuitAddress()
+            // Check if address uses a known transport pattern
+            bool isQuic = addr.Protocols.Any(p => p.Name == "quic-v1");
+            if (!isQuic && !addr.IsP2PCircuitAddress()
                 && (addr.Protocols.Count != 3
                 || !(addr.Protocols[2].Name == "ipfs" || addr.Protocols[2].Name == "p2p")))
             {
@@ -697,6 +724,7 @@ namespace PeerTalk
             var connection = new PeerConnection
             {
                 IsIncoming = false,
+                IsQuic = isQuic,
                 LocalPeer = LocalPeer,
                 // TODO: LocalAddress
                 LocalPeerKey = LocalPeerKey,
@@ -794,11 +822,19 @@ namespace PeerTalk
 
             // Get the actual IP address(es).
             IEnumerable<MultiAddress> addresses = new List<MultiAddress>();
-            var ips = NetworkInterface.GetAllNetworkInterfaces()
-                // It appears that the loopback adapter is not UP on Ubuntu 14.04.5 LTS
-                .Where(nic => nic.OperationalStatus == OperationalStatus.Up
-                    || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback)
-                .SelectMany(nic => nic.GetIPProperties().UnicastAddresses);
+            IEnumerable<UnicastIPAddressInformation> ips;
+            try
+            {
+                ips = NetworkInterface.GetAllNetworkInterfaces()
+                    // It appears that the loopback adapter is not UP on Ubuntu 14.04.5 LTS
+                    .Where(nic => nic.OperationalStatus == OperationalStatus.Up
+                        || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                    .SelectMany(nic => nic.GetIPProperties().UnicastAddresses);
+            }
+            catch (PlatformNotSupportedException)
+            {
+                ips = Enumerable.Empty<UnicastIPAddressInformation>();
+            }
             if (result.ToString().StartsWith("/ip4/0.0.0.0/"))
             {
                 addresses = ips
@@ -955,7 +991,7 @@ namespace PeerTalk
                     ConnectionEstablished?.Invoke(this, connection);
                 }
 
-                subStream?.Muxer.Connection.NotifyStreamIsProxy(subStream);
+                subStream?.Muxer?.Connection?.NotifyStreamIsProxy(subStream);
             }
             catch (Exception e)
             {

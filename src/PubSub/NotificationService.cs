@@ -120,7 +120,7 @@ namespace PeerTalk.PubSub
             var seqno = BitConverter.GetBytes(next);
             if (BitConverter.IsLittleEndian)
             {
-                seqno = seqno.Reverse().ToArray();
+                seqno = ((IEnumerable<byte>)seqno).Reverse().ToArray();
             }
             return new PublishedMessage
             {

@@ -129,6 +129,11 @@ namespace PeerTalk.Routing
         {
             log.Debug($"Q{Id} run {QueryType} {QueryKey}");
 
+            if (cancel.IsCancellationRequested || Dht.RoutingTable is null)
+            {
+                return;
+            }
+
             runningQuery = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             Dht.Stopped += OnDhtStopped;
             queryMessage = new DhtMessage
