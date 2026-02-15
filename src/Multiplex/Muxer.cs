@@ -19,7 +19,7 @@ namespace PeerTalk.Multiplex
     /// <remarks>
     ///   See <see href="https://github.com/libp2p/mplex"/> for the spec.
     /// </remarks>
-    public class Muxer
+    public class Muxer : IMuxer
     {
         static ILog log = LogManager.GetLogger(typeof(Muxer));
 

@@ -113,7 +113,16 @@ namespace PeerTalk.Multiplex
             });
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
 
-            Assert.AreEqual(4, await stream.ReadAsync(m2, 0, 5));
+            // ReadAsync returns data as it becomes available (standard stream behavior).
+            // Read all data by looping until end of stream.
+            int totalRead = 0;
+            while (totalRead < m2.Length)
+            {
+                var n = await stream.ReadAsync(m2, totalRead, m2.Length - totalRead);
+                if (n == 0) break;
+                totalRead += n;
+            }
+            Assert.AreEqual(4, totalRead);
             CollectionAssert.AreEqual(m1, m2);
         }
 

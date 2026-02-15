@@ -61,7 +61,7 @@ namespace PeerTalk.Multiplex
         /// <summary>
         ///   The multiplexor associated with the substream.
         /// </summary>
-        public Muxer Muxer { get; set; }
+        public IMuxer Muxer { get; set; }
 
         /// <inheritdoc />
         public override bool CanRead => !eos;
@@ -174,7 +174,12 @@ namespace PeerTalk.Multiplex
 
                 if (totalRead < count)
                 {
-                    inBlocks.TryReceive(null, out inBlock);
+                    // Only try to get more data if immediately available;
+                    // do not block waiting for more when we already have some data.
+                    if (!inBlocks.TryReceive(null, out inBlock))
+                    {
+                        return totalRead;
+                    }
                     inBlockOffset = 0;
                 }
                 else

@@ -78,5 +78,15 @@ namespace PeerTalk
                 messages.TryRemove(key, out DateTime _);
             }
         }
+
+        /// <summary>
+        ///   Gets recent message IDs for IHAVE gossip.
+        /// </summary>
+        /// <param name="count">Maximum number of IDs to return.</param>
+        /// <returns>An array of recent message IDs.</returns>
+        public string[] GetRecentMessageIds(int count)
+        {
+            return messages.Keys.Take(count).ToArray();
+        }
     }
 }

@@ -64,6 +64,15 @@ namespace PeerTalk
         public bool IsIncoming { get; set; }
 
         /// <summary>
+        ///   Indicates whether the connection was established over QUIC transport.
+        /// </summary>
+        /// <value>
+        ///   When <b>true</b>, the connection has built-in security (TLS 1.3) and
+        ///   multiplexing, so no separate multistream/security/muxer negotiation is needed.
+        /// </value>
+        public bool IsQuic { get; set; }
+
+        /// <summary>
         ///   Determines if the connection to the remote can be used.
         /// </summary>
         /// <value>
@@ -132,6 +141,11 @@ namespace PeerTalk
         }
 
         /// <summary>
+        ///   The muxer protocol agreed during security handshake (early negotiation).
+        /// </summary>
+        public string NegotiatedMuxer { get; set; }
+
+        /// <summary>
         ///   Signals that the security for the connection is established.
         /// </summary>
         /// <remarks>
@@ -145,7 +159,7 @@ namespace PeerTalk
         /// <remarks>
         ///   This can be awaited.
         /// </remarks>
-        public TaskCompletionSource<Muxer> MuxerEstablished { get; } = new TaskCompletionSource<Muxer>();
+        public TaskCompletionSource<IMuxer> MuxerEstablished { get; } = new TaskCompletionSource<IMuxer>();
 
         /// <summary>
         ///   Signals that the identity of the remote endpoint is established.
@@ -209,15 +223,56 @@ namespace PeerTalk
             if (!SecurityEstablished.Task.IsCompleted)
                 throw new AggregateException("Could not establish a secure connection.", exceptions);
 
-            await EstablishProtocolAsync("/multistream/", cancel).ConfigureAwait(false);
-            await EstablishProtocolAsync("/mplex/", cancel).ConfigureAwait(false);
-
-            var muxer = new Muxer
+            IMuxer muxer;
+            if (!string.IsNullOrEmpty(NegotiatedMuxer))
             {
-                Channel = Stream,
-                Initiator = true,
-                Connection = this
-            };
+                // Early muxer negotiation succeeded during security handshake.
+                // Skip multistream-select and set up the muxer directly.
+                log.Debug($"Early muxer negotiation: using {NegotiatedMuxer} on initiator");
+                muxer = new YamuxMuxer(initiator: true)
+                {
+                    Channel = Stream,
+                    Connection = this
+                };
+            }
+            else
+            {
+                // Fallback to multistream-select for muxer
+                await EstablishProtocolAsync("/multistream/", cancel).ConfigureAwait(false);
+
+                string negotiatedMuxer = null;
+                foreach (var muxerProto in new[] { "/yamux/", "/mplex/" })
+                {
+                    try
+                    {
+                        await EstablishProtocolAsync(muxerProto, cancel).ConfigureAwait(false);
+                        negotiatedMuxer = muxerProto;
+                        break;
+                    }
+                    catch { }
+                }
+                if (negotiatedMuxer == null)
+                    throw new Exception($"{RemotePeer?.Id} does not support any known muxer protocol.");
+
+                if (negotiatedMuxer.Contains("yamux"))
+                {
+                    muxer = new YamuxMuxer(initiator: true)
+                    {
+                        Channel = Stream,
+                        Connection = this
+                    };
+                }
+                else
+                {
+                    muxer = new Muxer
+                    {
+                        Channel = Stream,
+                        Initiator = true,
+                        Connection = this
+                    };
+                }
+            }
+
             muxer.SubstreamCreated += (s, e) => _ = ReadMessagesAsync(e, CancellationToken.None);
             this.MuxerEstablished.SetResult(muxer);
 
@@ -244,9 +299,23 @@ namespace PeerTalk
         /// <returns></returns>
         public async Task EstablishProtocolAsync(string name, Stream stream, CancellationToken cancel = default(CancellationToken))
         {
+            // Try exact match first (for protocols like /noise that have no version)
+            if (ProtocolRegistry.Protocols.ContainsKey(name))
+            {
+                await Message.WriteAsync(name, stream, cancel).ConfigureAwait(false);
+                var result = await Message.ReadStringAsync(stream, cancel).ConfigureAwait(false);
+                if (result == name) return;
+            }
+
+            var expectedName = name.Trim('/');
             var protocols = ProtocolRegistry.Protocols.Keys
-                .Where(k => k == name || k.StartsWith(name))
-                .Select(k => VersionedName.Parse(k))
+                .Where(k => k != name && k.StartsWith(name))
+                .Select(k =>
+                {
+                    try { return VersionedName.Parse(k); }
+                    catch { return null; }
+                })
+                .Where(vn => vn != null && vn.Name == expectedName)
                 .OrderByDescending(vn => vn)
                 .Select(vn => vn.ToString());
             foreach (var protocol in protocols)
@@ -258,11 +327,11 @@ namespace PeerTalk
                     return;
                 }
             }
-            if (protocols.Count() == 0)
+            if (!ProtocolRegistry.Protocols.ContainsKey(name) && !protocols.Any())
             {
                 throw new Exception($"Protocol '{name}' is not registered.");
             }
-            throw new Exception($"{RemotePeer.Id} does not support protocol '{name}'.");
+            throw new Exception($"{RemotePeer?.Id} does not support protocol '{name}'.");
         }
 
         /// <summary>
