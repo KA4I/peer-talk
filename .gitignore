@@ -203,3 +203,12 @@ src/Ipfs.Engine.xml
 
 # codecov
 coverage.opencover.xml
+# Test output files
+failedtests.txt
+fullresults.txt
+peertalk-results.txt
+testout.txt
+testresult.txt
+test_e2e.txt
+test/blame_results.txt
+test/dump_stacks.txt
