@@ -11,11 +11,13 @@ namespace PeerTalk.SecureCommunication
     public class Psk1StreamTest
     {
         [TestMethod]
-        [ExpectedException(typeof(Exception))]
         public void BadKeyLength()
         {
-            var psk = new PreSharedKey();
-            var _ = new Psk1Stream(Stream.Null, psk);
+            Assert.Throws<Exception>(() =>
+            {
+                var psk = new PreSharedKey();
+                var _ = new Psk1Stream(Stream.Null, psk);
+            });
         }
 
         [TestMethod]
@@ -64,12 +66,14 @@ namespace PeerTalk.SecureCommunication
         }
 
         [TestMethod]
-        [ExpectedException(typeof(EndOfStreamException))]
         public void ReadingInvalidNonce()
         {
-            var psk = new PreSharedKey().Generate();
-            var secure = new Psk1Stream(Stream.Null, psk);
-            secure.ReadByte();
+            Assert.ThrowsExactly<EndOfStreamException>(() =>
+            {
+                var psk = new PreSharedKey().Generate();
+                var secure = new Psk1Stream(Stream.Null, psk);
+                secure.ReadByte();
+            });
         }
     }
 }

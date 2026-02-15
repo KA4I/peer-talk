@@ -71,28 +71,34 @@ namespace PeerTalk.Cryptography
         }
 
         [TestMethod]
-        [ExpectedException(typeof(Exception))]
         public void Export_BadBase()
         {
-            var psk = new PreSharedKey().Generate();
-            var s = new StringWriter();
-            psk.Export(s, "bad");
+            Assert.Throws<Exception>(() =>
+            {
+                var psk = new PreSharedKey().Generate();
+                var s = new StringWriter();
+                psk.Export(s, "bad");
+            });
         }
 
         [TestMethod]
-        [ExpectedException(typeof(FormatException))]
         public void Import_BadCodec()
         {
-            var s = new StringReader("/bad/codec/");
-            new PreSharedKey().Import(s);
+            Assert.ThrowsExactly<FormatException>(() =>
+            {
+                var s = new StringReader("/bad/codec/");
+                new PreSharedKey().Import(s);
+            });
         }
 
         [TestMethod]
-        [ExpectedException(typeof(FormatException))]
         public void Import_BadBase()
         {
-            var s = new StringReader("/key/swarm/psk/1.0.0/\n/base128/");
-            new PreSharedKey().Import(s);
+            Assert.ThrowsExactly<FormatException>(() =>
+            {
+                var s = new StringReader("/key/swarm/psk/1.0.0/\n/base128/");
+                new PreSharedKey().Import(s);
+            });
         }
 
         /// <summary>

@@ -87,7 +87,7 @@ namespace PeerTalk.Cryptography
             byteCount = 0;
             Arrays.Fill(counter, (byte)0);
             Array.Copy(IV, 0, counter, 0, IV.Length);
-            cipher.Reset();
+            Arrays.Fill(counterOut, (byte)0);
         }
 
         /// <inheritdoc />
@@ -112,6 +112,20 @@ namespace PeerTalk.Cryptography
                 output[outStart++] = ReturnByte(input[inStart++]);
             }
 
+        }
+
+        /// <inheritdoc />
+        public void ProcessBytes(ReadOnlySpan<byte> input, Span<byte> output)
+        {
+            if (output.Length < input.Length)
+            {
+                throw new DataLengthException("Output buffer too short");
+            }
+
+            for (int i = 0; i < input.Length; i++)
+            {
+                output[i] = ReturnByte(input[i]);
+            }
         }
 
         /// <inheritdoc />

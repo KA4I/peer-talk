@@ -91,7 +91,15 @@ namespace PeerTalk.Cryptography
                     key.signingAlgorithmName = RsaSigningAlgorithmName;
                     break;
                 case KeyType.Ed25519:
-                    key.publicKey = PublicKeyFactory.CreateKey(ipfsKey.Data);
+                    // libp2p/Kubo sends the raw 32-byte Ed25519 public key, not DER SubjectPublicKeyInfo
+                    if (ipfsKey.Data.Length == 32)
+                    {
+                        key.publicKey = new Ed25519PublicKeyParameters(ipfsKey.Data, 0);
+                    }
+                    else
+                    {
+                        key.publicKey = PublicKeyFactory.CreateKey(ipfsKey.Data);
+                    }
                     key.signingAlgorithmName = Ed25519SigningAlgorithmName;
                     break;
                 case KeyType.Secp256k1:
